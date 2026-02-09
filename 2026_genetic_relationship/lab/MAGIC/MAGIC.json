@@ -1,0 +1,19 @@
+{
+  "crosstype": "riself4",
+  "sep": ",",
+  "na.strings": ["-", "NA"],
+  "geno": "MAGIC_RIL.csv",
+  "founder_geno": "MAGIC_founder.csv",
+  "gmap":"MAGIC_gmap.csv",
+  "alleles": ["B73", "Mo17", "W22", "FV2"],
+  "genotypes": {
+    "A": 1,
+    "H": 2,
+    "B": 3
+  },
+  "geno_transposed": true,
+  "founder_geno_transposed": true,
+  "cross_info": {
+    "file": "MAGIC_cross_info.csv"
+  }
+}

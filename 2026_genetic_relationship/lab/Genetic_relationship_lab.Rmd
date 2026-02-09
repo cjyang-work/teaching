@@ -1,0 +1,1181 @@
+---
+title: "Genetic relationship lab"
+date: Feb 12-13, 2026
+output:
+  html_document:
+    self_contained: true
+---
+
+# {.tabset .tabset-pills}  
+
+## **Introduction**  
+
+All of our lab practices will be done in `R`. If you do not already have `R`, you can download it from [CRAN](https://cran.rediris.es/). Please use `RStudio` if you can, otherwise plain `R` is fine too. If you are having any trouble with running `R`, you can try [RStudio Cloud](https://posit.cloud/). It is a little slow but it is better than nothing.  
+
+Here is a quick guide to using `R` for those who are not familiar with it.  
+
+* any line that starts with `#` are comments and not executed.  
+* you can run each line by clicking once anywhere on the line, then click `Run` or `Ctrl R` (`Ctrl Enter`).  
+* you can also highlight multiple lines and run the scripts similarly.  
+* a function usually appears as `function_name()` where the inputs go into the parentheses.  
+* outputs from a function can be assigned `<-` to an object, for example, `a <- mean(1:10)`.  
+* there are basic functions that come with `R` installation, but there are also a lot of packages that you can install and use their functions. To do so, you need to run `library(package_name)` every time you start a new `R` session.  
+
+The tips above are probably not enough for beginners in `R`. So, if you have any question during the lab session, please ask me. You can also reach me by email (cjyang90@uwalumni.com) if you prefer.  
+
+We will be using the data from [Ganal et al 2011](https://doi.org/10.1371/journal.pone.0028334) for our lab session. The original data contains 194 `r emo::ji("corn")` maize (and teosinte) inbred lines and 1,008 genomic markers with physical and genetic positions. The data is not quite sufficient for many things that we will be doing so I have created several simulated datasets based on this. All of the required files should be in the course folder, but you can also download them [**here**](https://github.com/cjyang-work/teaching/tree/main/2026_genetic_relationship) if you are having issues with any of the files.  
+
+1. **DIV**: This dataset contains the original population (hence, DIV for diverse) with simulated QTLs and phenotype. There are [5 files](https://github.com/cjyang-work/teaching/tree/main/2026_genetic_relationship/lab/DIV).  
+    + DIV_geno.csv: genomic marker data for 194 lines and 1,008 markers.  
+    + DIV_group.csv: grouping information (CIMMYT, EU_Inbred, NA_Inbred, PVP, Teosinte) for the lines.  
+    + DIV_marker.csv: marker position information (name, chromosome, genetic position, physical position).  
+    + DIV_pheno.csv: simulated phenotypic trait data with a heritability of 0.8 (Va=4, Ve=1).  
+    + DIV_qtl.csv: information for 50 markers closest to the simulated QTLs.  
+  
+2. **PERM**: This dataset contains 4 founders (B73, Mo17, W22, FV2), three generations and simulated crosses involving all permutations in each generation. First generation has 4 individuals, second has 6, and third has 30. Recombination events were simulated for the crosses using `R/AlphaSimR`. There are [3 files](https://github.com/cjyang-work/teaching/tree/main/2026_genetic_relationship/lab/PERM).  
+    + PERM_geno.csv: genomic marker data for 40 individuals and 1,008 markers.  
+    + PERM_marker.csv: marker position information (same file as DIV_marker.csv).  
+    + PERM_ped.csv: pedigree data for 40 individuals.  
+  
+3. **MAGIC**: This dataset contains 10 simulated recombinant inbred lines (RILs) derived from 4 founders (B73, Mo17, W22, FV2). All RILs are [(B73 x Mo17) x (W22 x FV2)] and they are made inbred using the `makeDH()` function in `R/AlphaSimR`. There are 5 files in the [zipped folder](https://github.com/cjyang-work/teaching/blob/main/2026_genetic_relationship/lab/MAGIC.zip). They are kept in a zipped folder as this dataset will be analyzed using `R/qtl2` and this is the format that the package requires.  
+
+4. **BCF**: This dataset contains 50 simulated individuals derived from crosses between W22 and FV2. There are 16 BC4 individuals with W22 as the recurrent parent, 16 BC4 individuals with FV2 as the recurrent parents, and 18 BC4F2 individuals. The BC4F2 are F2 progeny from random crosses among the 16 pairs of BC4 individuals. There are [2 files](https://github.com/cjyang-work/teaching/tree/main/2026_genetic_relationship/lab/BCF).  
+    + BCF_geno.csv: genomic marker data for 50 BC4/BC4F2 individuals and 1,008 markers.  
+    + BCF.geno: genomic marker data in a different format as needed by the `R/LEA` package.  
+
+<center><b><a href="#">Return to top</a></b></center>
+<br>
+
+## **Identity-by-descent (IBD)**  
+This section contains the following three topics:  
+1. [Coefficient of coancestry](#1.1)  
+2. [Coefficient of fraternity](#1.2)  
+3. [Parentage inference](#1.3)  
+
+We will need the following package(s) for this section. Please install them if you don't already have them.  
+```{r eval=FALSE}
+install.packages("kinship2")
+install.packages("ggplot2")
+install.packages("reshape2")
+install.packages("AGHmatrix")
+install.packages("qtl2")
+```
+
+Load the package(s).  
+```{r message=FALSE}
+library(kinship2)
+library(ggplot2)
+library(reshape2)
+library(AGHmatrix)
+library(qtl2)
+```
+
+### Coefficient of coancestry {#1.1}  
+Here, we will use the `R/kinship2` package to compute the coefficient of coancestry in the PERM dataset. There will also be scripts for computing the coefficient manually, but we will not go through it in lab.  
+
+Load the pedigree for PERM.  
+```{r}
+ped <- read.csv(file.path("PERM", "PERM_ped.csv"), as.is=TRUE)
+```
+
+Here is how the pedigree looks like. For example, ancestry of individual 11 is highlighted in red.  
+```{r fig.width=10, fig.height=4}
+# manually plot the pedigree.
+ped2 <- ped
+ped2$x <- c(1.5,10.5,19.5,28.5, 1.5,7,12.5,18,23.5,29, 1:30)
+ped2$y <- c(rep(3,4), rep(2,6), rep(1,30))
+ped3 <- vector()
+for(i in 5:40){
+  ped3 <- rbind(ped3,
+                data.frame(x1=ped2$x[i],
+                           x2=ped2$x[ped2$P1[i]],
+                           y1=ped2$y[i],
+                           y2=ped2$y[ped2$P1[i]],
+                           highlight=ifelse(i%in%c(5,6,11), TRUE, FALSE)),
+                data.frame(x1=ped2$x[i],
+                           x2=ped2$x[ped2$P2[i]],
+                           y1=ped2$y[i],
+                           y2=ped2$y[ped2$P2[i]],
+                           highlight=ifelse(i%in%c(5,6,11), TRUE, FALSE)))
+}
+ggplot() +
+  geom_segment(data=ped3, aes(x=x1, xend=x2, y=y1, yend=y2, color=highlight), linewidth=1) +
+  geom_label(data=ped2, aes(x=x, y=y, label=ID), size=4, fill="#FFFFFF") +
+  theme_void() +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("#999999", "#FF9999")) +
+  coord_fixed(ratio=4)
+```
+
+Use the `kinship()` function from `R/kinship2` to compute the coefficients of coancestry.  
+```{r}
+coan <- kinship(id=ped$ID, dadid=ped$P1, momid=ped$P2)
+```
+
+Prepare the matrix of coefficients for plotting.  
+```{r}
+coan4plot <- melt(data=coan)
+coan4plot <- coan4plot[order(coan4plot$Var1, coan4plot$Var2), ]
+colnames(coan4plot) <- c("ID1", "ID2", "coef")
+```
+
+Visualize the coefficients using a heatmap.  
+```{r}
+ggplot() +
+  geom_tile(data=coan4plot, aes(x=ID1, y=ID2, fill=coef), color="#999999") +
+  theme_bw() +
+  scale_y_reverse(expand=c(0,0)) +
+  scale_x_continuous(position="top", expand=c(0,0)) +
+  scale_fill_gradient(low="#FFFFFF", high="#0000FF") +
+  coord_fixed()
+```
+
+Below is one of many ways we can do to calculate the coefficients manually. We will not go through this in the lab, but if you wish to give this a try, feel free to do it on your own without looking at the scripts.  
+```{r}
+# create a table of all pairwise relationships
+n <- nrow(ped)
+df <- data.frame(ID1=sort(rep(1:n, n)), ID2=rep(1:n, n), manual=NA)
+df <- df[!(df$ID2 > df$ID1), ]
+rownames(df) <- NULL
+
+# identify the individuals in each generation.
+g0 <- c(1:4)
+g1 <- c(5:10)
+g2 <- c(11:40)
+
+# compute the coefficients for g0 to itself.
+for(i in g0) df$manual[df$ID1==i & df$ID2==i] <- 0.5
+
+# compute the coefficients for g0 to g0.
+for(i in g0){
+  for(j in g0[g0 < i]){
+    df$manual[df$ID1==i & df$ID2==j] <- 0
+  }
+}
+
+# compute the coefficients for g1 to g0/g1.
+for(i in g1){
+  for(j in c(g0, g1)[c(g0, g1) < i]){
+    a <- sort(c(ped$P1[ped$ID==i], j))
+    b <- sort(c(ped$P2[ped$ID==i], j))
+    df$manual[df$ID1==i & df$ID2==j] <- 0.5*(df$manual[df$ID1==a[2] & df$ID2==a[1]] + df$manual[df$ID1==b[2] & df$ID2==b[1]])
+  }
+}
+
+# compute the coefficients for g1 to itself.
+for(i in g1){
+  a <- sort(c(ped$P1[ped$ID==i], ped$P2[ped$ID==i]))
+  df$manual[df$ID1==i & df$ID2==i] <- 0.5*(1 + df$manual[df$ID1==a[2] & df$ID2==a[1]])
+}
+
+# compute the coefficients for g2 to g0/g1/g2.
+for(i in g2){
+  for(j in c(g0, g1, g2)[c(g0, g1, g2) < i]){
+    a <- sort(c(ped$P1[ped$ID==i], j))
+    b <- sort(c(ped$P2[ped$ID==i], j))
+    df$manual[df$ID1==i & df$ID2==j] <- 0.5*(df$manual[df$ID1==a[2] & df$ID2==a[1]] + df$manual[df$ID1==b[2] & df$ID2==b[1]])
+  }
+}
+
+# compute the coefficients for g2 to itself.
+for(i in g2){
+  a <- sort(c(ped$P1[ped$ID==i], ped$P2[ped$ID==i]))
+  df$manual[df$ID1==i & df$ID2==i] <- 0.5*(1 + df$manual[df$ID1==a[2] & df$ID2==a[1]])
+}
+```
+
+Compare the coefficients from `R/kinship2` and manual computation.  
+```{r fig.width=4, fig.height=4}
+# combine the coefficients.
+df$kinship2 <- coan4plot$coef[!(coan4plot$ID2 > coan4plot$ID1)]
+
+# plot the coefficients.
+ggplot() +
+  geom_point(data=df, aes(x=manual, y=kinship2)) +
+  theme_bw() +
+  coord_fixed()
+```
+
+### Coefficient of fraternity {#1.2}  
+Here, we will use the `R/AGHmatrix` package to compute the coefficient of fraternity in the PERM dataset. There will also be scripts for computing the coefficient manually, but we will not go through it in lab. There is no need to load a new pedigree as we will be using the same pedigree as we used previously.  
+
+Use the `Amatrix()` function from `R/AGHmatrix` to compute the coefficients of fraternity.  
+```{r}
+frat <- Amatrix(data=ped, dominance=TRUE)
+```
+
+Prepare the matrix of coefficients for plotting.  
+```{r}
+frat4plot <- melt(data=frat)
+frat4plot <- frat4plot[order(frat4plot$Var1, frat4plot$Var2), ]
+colnames(frat4plot) <- c("ID1", "ID2", "coef")
+```
+
+Visualize the coefficients using a heatmap.  
+```{r}
+ggplot() +
+  geom_tile(data=frat4plot, aes(x=ID1, y=ID2, fill=coef), color="#999999") +
+  theme_bw() +
+  scale_y_reverse(expand=c(0,0)) +
+  scale_x_continuous(position="top", expand=c(0,0)) +
+  scale_fill_gradient(low="#FFFFFF", high="#0000FF") +
+  coord_fixed()
+```
+
+Below is one of many ways we can do to calculate the coefficients manually. Similar as before, we will not go through this in the lab, but if you wish to give this a try, feel free to do it on your own without looking at the scripts.  
+```{r}
+# create a table of all pairwise relationships
+df2 <- df[, c(1,2)]
+df2$manual <- NA
+
+# compute the coefficients for an individual to itself.
+for(i in 1:n) df2$manual[df2$ID1==i & df2$ID2==i] <- 1
+
+# compute the coefficients for g0 to g0/g1/g2.
+for(i in 1:n){
+  for(j in g0[g0 < i]){
+    df2$manual[df2$ID1==i & df2$ID2==j] <- 0
+  }
+}
+
+# compute the remaining coefficients.
+for(i in c(g1,g2)){
+  for(j in c(g1,g2)[c(g1,g2) < i]){
+    a <- sort(c(ped$P1[i], ped$P1[j]))
+    b <- sort(c(ped$P2[i], ped$P2[j]))
+    d <- sort(c(ped$P1[i], ped$P2[j]))
+    e <- sort(c(ped$P2[i], ped$P1[j]))
+    
+    if(is.na(df2$manual[df2$ID1==i & df2$ID2==j])){
+      P1P1 <- df$manual[df$ID1==a[2] & df$ID2==a[1]]
+      P2P2 <- df$manual[df$ID1==b[2] & df$ID2==b[1]]
+      P1P2 <- df$manual[df$ID1==d[2] & df$ID2==d[1]]
+      P2P1 <- df$manual[df$ID1==e[2] & df$ID2==e[1]]
+      df2$manual[df2$ID1==i & df2$ID2==j] <- P1P1*P2P2 + P1P2*P2P1
+    }
+  }
+}
+```
+
+Compare the coefficients from `R/AGHmatrix` and manual computation.  
+```{r fig.width=4, fig.height=4}
+# combine the coefficients.
+df2$AGHmatrix <- frat4plot$coef[!(frat4plot$ID2 > frat4plot$ID1)]
+
+# plot the coefficients.
+ggplot() +
+  geom_point(data=df2, aes(x=manual, y=AGHmatrix)) +
+  theme_bw() +
+  coord_fixed()
+```
+
+### Parentage inference {#1.3}  
+Here, we will use the `R/qtl2` package to compute the genotype probability, or P(IBD), in the MAGIC dataset. We can then infer the parentage based on the genotype probability at each marker. This is usually the first step (well, after you have collected the data and prepared them) for doing QTL linkage mapping.  
+
+Load the data for MAGIC.  
+```{r}
+magic <- read_cross2("MAGIC.zip")
+```
+
+Use the `calc_genoprob()` function from `R/qtl2` to compute the P(IBD). This is normally quite slow, but our dataset here is really small so it should be pretty fast.  
+```{r}
+gp <- calc_genoprob(magic)
+```
+
+The `R/qtl2` package does not provide an easy way to visualize the P(IBD), so we will create the plot manually.  
+
+```{r fig.width=10, fig.height=6}
+# prepare the data for plotting.
+gp4plot <- vector()
+for(i in 1:length(gp)){
+  gp4plot <- rbind(gp4plot,
+                   cbind(melt(gp[[i]]),
+                         Chr=i,
+                         Pos=sort(rep(magic$gmap[[i]], 4*10))))
+}
+colnames(gp4plot) <- c("RIL", "Founder", "SNP", "PIBD", "Chr", "Pos")
+levels(gp4plot$Founder) <- c("B73", "Mo17", "W22", "FV2")
+
+# create the plot.
+ggplot() +
+  geom_line(data=gp4plot, aes(x=Pos, y=PIBD, color=Founder), linewidth=1) +
+  facet_grid(rows=vars(RIL), cols=vars(Chr), scales="free_x", space="free_x") +
+  theme_minimal() +
+  theme(legend.position="bottom") +
+  scale_color_manual(values=c("#CA0020", "#F4A582", "#0571B0", "#92C5DE")) +
+  scale_y_continuous(breaks=c(0,0.5,1))
+
+```
+
+Based on the P(IBD), we can infer the parentage by setting a threshold in the `maxmarg()` function.  
+```{r}
+# threshold of 0.5
+ip <- maxmarg(gp, minprob=0.5)
+```
+
+Again, the `R/qtl2` package does not provide an easy way to visualize the inferred parentage, so we will create the plot manually.  
+
+```{r fig.width=10, fig.height=4}
+# prepare the data for plotting.
+ip4plot <- data.frame(t(do.call(cbind, ip)))
+temp <- sapply(1:length(magic$gmap), FUN=function(i) length(magic$gmap[[i]]))
+ip4plot$Chr <- unlist(lapply(1:length(temp), FUN=function(i) rep(i, temp[i])))
+ip4plot$Pos <- unlist(magic$gmap)
+ip4plot <- melt(ip4plot, id.vars=c("Chr", "Pos"))
+colnames(ip4plot)[3:4] <- c("RIL", "Founder")
+ip4plot$Founder <- factor(x=ip4plot$Founder, labels=c("B73", "Mo17", "W22", "FV2"))
+
+# create the plot.
+ggplot() +
+  geom_point(data=ip4plot, aes(x=Pos, y=RIL, color=Founder), size=2) +
+  facet_grid(cols=vars(Chr), scales="free_x", space="free_x") +
+  theme_minimal() +
+  theme(legend.position="bottom") +
+  scale_color_manual(values=c("#CA0020", "#F4A582", "#0571B0", "#92C5DE")) +
+  scale_y_discrete(limits=rev)
+
+```
+
+<center><b><a href="#">Return to top</a></b></center>
+<br>
+
+## **Identity-by-state (IBS)**  
+This section contains the following five topics:  
+1. [Additive genetic relationship matrix (A-GRM)](#2.1)  
+2. [Dominance genetic relationship matrix (D-GRM)](#2.2)  
+3. [Compare A/D-GRM to coefficients of coancestry/fraternity](#2.3)  
+4. [Additive x additive epistasis genetic relationship matrix (AA-GRM)](#2.4)  
+5. [Splitting and combining GRMs](#2.5)  
+
+We will need the following package(s) for this section. Please install them if you don't already have them.  
+```{r eval=FALSE}
+install.packages("sommer")
+install.packages("kinship2")
+install.packages("AGHmatrix")
+```
+
+Load the package(s).  
+```{r message=FALSE}
+library(sommer)
+library(kinship2)
+library(AGHmatrix)
+```
+
+### Additive genetic relationship matrix (A-GRM) {#2.1}  
+A-GRM is routinely used in GWAS and genomic prediction to model for polygenic additive variation. There are many different variants of methods for calculating A-GRM, but we will only go through one. We will compute A-GRM using `R/sommer` and manual method.  
+
+Load the genomic marker data for PERM.  
+```{r}
+geno <- read.csv(file.path("PERM", "PERM_geno.csv"), as.is=TRUE, row.names=1)
+geno <- as.matrix(geno)
+```
+
+Use the `A.mat()` function in `R/sommer` to calculate the A-GRM. Our marker data is coded as 0/1/2, but this function requires the marker data to be coded as -1/0/1.  
+```{r}
+KA <- A.mat(geno-1)
+```
+
+We can also compute the A-GRM manually. Let $X$ be our marker data with individual-$i$ in the rows and marker-$j$ in the columns. Allele frequency for each marker is $p_{j}$.  
+
+First, we need to center the marker data ($X$) by the means ($2p_{j}$) of each marker, which are twice the allele frequencies.  
+
+$$W_{ij} = X_{ij} - 2p_{j}$$  
+Next, we multiply $W$ by its transpose to obtain the relationships between all pairs of individuals and standardize the matrix by the denominator to get us the A-GRM.  
+
+$$K_{A} = \frac{WW'}{\sum 2p_{j}(1-p_{j})}$$
+The equation above is taken from method 1 of [vanRaden 2008](https://doi.org/10.3168/jds.2007-0980).  
+
+Let's replicate that here.  
+```{r}
+# compute the allele frequency.
+p <- colSums(geno)/(2*colSums(!is.na(geno)))
+
+# center the marker data.
+W <- geno - matrix(rep(2*p, nrow(geno)), nrow=nrow(geno), byrow=TRUE)
+
+# obtain the denominator.
+d <- sum(2*p*(1-p))
+
+# compute the A-GRM.
+KA2 <- W%*%t(W)/d
+```
+
+Check if KA and KA2 are identical.  
+
+```{r fig.width=5, fig.height=4}
+# prepare the data for plotting.
+KA4plot <- rbind(data.frame(sommer=KA[lower.tri(KA)], manual=KA2[lower.tri(KA2)], type="off-diagonal"),
+                 data.frame(sommer=diag(KA), manual=diag(KA2), type="diagonal"))
+
+# create the plot.
+ggplot() +
+  geom_point(data=KA4plot, aes(x=sommer, y=manual, color=type)) +
+  theme_bw() +
+  coord_fixed()
+```
+
+### Dominance genetic relationship matrix (D-GRM) {#2.2}  
+D-GRM is occasionally used in GWAS and genomic prediction to model for polygenic dominance variation. It is often used together with A-GRM and rarely by itself. Again, there are many different variants of methods for calculating D-GRM, but we will only go through one. We will compute D-GRM using `R/sommer` and manual method.  
+
+Use the `D.mat()` function in `R/sommer` to calculate the D-GRM. Our marker data is coded as 0/1/2, but this function requires the marker data to be coded as -1/0/1.  
+```{r}
+KD <- D.mat(X=geno-1, nishio=FALSE)
+```
+
+We can also compute the D-GRM manually. Let $X$ be our marker data with individual-$i$ in the rows and marker-$j$ in the columns. Allele frequency for each marker is $p_{j}$.  
+
+First, we need to convert the additive coding to dominance coding in the marker data.  
+
+\begin{align*}
+  Y_{ij}=
+    \begin{cases}
+      0 if X_{ij}=0 \\
+      1 if X_{ij}=1 \\
+      0 if X_{ij}=2
+    \end{cases}
+\end{align*}
+
+Second, we need to center the marker data ($Y$) as below.  
+
+$$W_{ij} = Y_{ij} - 2p_{j}(1-p_{j})$$  
+Third, we multiply $W$ by its transpose to obtain the relationships between all pairs of individuals and standardize the matrix by the denominator to get us the A-GRM.  
+
+$$K_{D} = \frac{WW'}{\sum 2p_{j}(1-p_{j})(1-2p_{j}(1-p_{j}))}$$
+The equation above is taken from [Su et al 2012](https://doi.org/10.1371/journal.pone.0045293).  
+
+Let's replicate that here.  
+```{r}
+# convert to dominance marker data.
+genod <- geno
+genod[genod==2] <- 0
+
+# center the marker data.
+Wd <- genod - matrix(rep(2*p*(1-p), nrow(genod)), nrow=nrow(genod), byrow=TRUE)
+
+# obtain the denominator.
+dd <- sum(2*p*(1-p)*( 1-2*p*(1-p) ))
+
+# compute the D-GRM.
+KD2 <- Wd%*%t(Wd)/dd
+```
+
+Check if KD and KD2 are identical.  
+
+```{r fig.width=5, fig.height=4}
+# prepare the data for plotting.
+KD4plot <- rbind(data.frame(sommer=KD[lower.tri(KD)], manual=KD2[lower.tri(KD2)], type="off-diagonal"),
+                 data.frame(sommer=diag(KD), manual=diag(KD2), type="diagonal"))
+
+# create the plot.
+ggplot() +
+  geom_point(data=KD4plot, aes(x=sommer, y=manual, color=type)) +
+  theme_bw() +
+  coord_fixed()
+```
+
+### Compare A/D-GRM to coefficients of coancestry/fraternity {#2.3}  
+As discussed in our lecture, the IBD- and IBS-based methods measure the same concepts but their estimates are different. We will re-compute the IBD-based coefficients and compare them to the IBS-based coefficients.  
+
+Load the pedigree for PERM.  
+```{r}
+ped <- read.csv(file.path("PERM", "PERM_ped.csv"), as.is=TRUE)
+```
+
+How does the pedigree-based A-GRM (coancestry) compare to the marker-based A-GRM? How does the pedigree-based D-GRM (fraternity) compare to the marker-based D-GRM? Let's find out. First, we need re-compute the coefficients of coancestry and fraternity.  
+```{r}
+# coancestry
+HA <- kinship(id=ped$ID, dadid=ped$P1, momid=ped$P2)
+
+# fraternity
+HD <- Amatrix(data=ped, dominance=TRUE)
+```
+
+Let's compare the pedigree-based GRMs to marker-based GRMs. Recall that A-GRM is twice the coefficients of coancestry, so we are dividing the A-GRM values by 2.  
+```{r fig.width=10, fig.height=4}
+# prepare the data for plotting.
+compareAD <- rbind(data.frame(pedigree=HA[lower.tri(HA)],
+                              marker=KA[lower.tri(KA)]/2,
+                              type="off-diagonal",
+                              coef="Additive/coancestry"),
+                   data.frame(pedigree=diag(HA),
+                              marker=diag(KA)/2,
+                              type="diagonal",
+                              coef="Additive/coancestry"),
+                   data.frame(pedigree=HD[lower.tri(HD)],
+                              marker=KD[lower.tri(KD)],
+                              type="off-diagonal",
+                              coef="Dominance/fraternity"),
+                   data.frame(pedigree=diag(HD),
+                              marker=diag(KD),
+                              type="diagonal",
+                              coef="Dominance/fraternity"))
+
+# create an annotation line to highlight the expected 1-1 relationship.
+temp <- data.frame(x1=c(0,0), x2=c(0.55,1), y1=c(0,0), y2=c(0.55,1), coef=c("Additive/coancestry", "Dominance/fraternity"))
+
+# create the plot.
+ggplot() +
+  geom_point(data=compareAD, aes(x=pedigree, y=marker, color=type)) +
+  geom_segment(data=temp, aes(x=x1, xend=x2, y=y1, yend=y2), color="#999999", linewidth=1) +
+  geom_smooth(data=compareAD, aes(x=pedigree, y=marker), method="lm", color="#000000") +
+  facet_wrap(vars(coef), nrow=1) +
+  theme_bw() +
+  coord_fixed(xlim=c(-1,1.5))
+```
+
+### Additive x additive epistasis genetic relationship matrix (AA-GRM) {#2.4}  
+In addition to additive and dominance gene actions, there are higher orders of gene actions known as epistasis. For example, additive x additive, additive x dominance, additive x additive x dominance, and many more. It gets trickier as the order increases. Fundamentally, they can all be modeled the same way using GRM and we will only show an example for AA-GRM.  
+
+Use a subset of 50 markers for demonstrating the example here.  
+```{r}
+X <- geno[, 1:50]
+```
+
+Unlike the previous method, we will first calculate the A-GRM using a slightly different method by centering and scaling the additive markers first. This makes it easier to compute the AA-GRM later.  
+```{r}
+# center and scale.
+W <- scale(X, center=TRUE, scale=TRUE)/sqrt(ncol(X))
+
+# compute the A-GRM.
+MX <- W%*%t(W)
+```
+
+We have two methods to compute the AA-GRM. First is the direct method, which is impossible to do for large number of markers due to the all possible pairwise combinations of markers.  
+```{r}
+# multiply all possible pairwise combinations.
+WW <- lapply(1:(ncol(W)-1), FUN=function(i) W[,i]*W[,(i+1):ncol(W), drop=FALSE])
+WW <- do.call(cbind, WW)
+
+# method 1 for computing the additive x additive epistasis GRM.
+MXX1 <- WW%*%t(WW)
+```
+
+The second method is taken from [Jiang and Reif 2020](https://doi.org/10.1534%2Fgenetics.120.303459), which involves Hadamard product of A-GRM (simpler).  
+
+$$K_{AA} = \frac{K_{A}K_{A} - (WW)(WW)^{T}}{2}$$  
+```{r}
+# method 2.
+MXX2 <- 0.5*(MX*MX - (W*W)%*%t(W*W))
+```
+
+Check if method 1 and 2 are identical.  
+```{r fig.width=5, fig.height=4}
+# prepare the data for plotting.
+MXX4plot <- rbind(data.frame(method.1=MXX1[lower.tri(MXX1)],
+                             method.2=MXX2[lower.tri(MXX2)],
+                             type="off-diagonal"),
+                  data.frame(method.1=diag(MXX1),
+                             method.2=diag(MXX2), type="diagonal"))
+
+# create the plot.
+ggplot() +
+  geom_point(data=MXX4plot, aes(x=method.1, y=method.2, color=type)) +
+  theme_bw() +
+  coord_fixed()
+```
+
+Note that the additive by additive epistasis markers are computed after the additive markers have been centered. It would be very different if we had computed the additive by additive epistasis markers first before centering them.  
+
+Just for fun, let's look at how A-GRM values compare to D-GRM and AA-GRM values.  
+```{r fig.width=10, fig.height=4}
+# compute KAA for the full data.
+W <- scale(geno, center=TRUE, scale=TRUE)/sqrt(ncol(geno))
+KAA <- 0.5*((W%*%t(W))*(W%*%t(W)) - (W*W)%*%t(W*W))
+
+# prepare the data for plotting.
+K4plot <- rbind(data.frame(KA=KA[lower.tri(KA)],
+                           KD=KD[lower.tri(KD)],
+                           KAA=KAA[lower.tri(KAA)],
+                           type="off-diagonal"),
+                data.frame(KA=diag(KA),
+                           KD=diag(KD),
+                           KAA=diag(KAA),
+                           type="diagonal"))
+K4plot <- melt(K4plot, id.vars=c("KA", "type"))
+
+# create the plot.
+ggplot() +
+  geom_point(data=K4plot, aes(x=KA, y=value, color=type)) +
+  facet_wrap(vars(variable), nrow=1) +
+  theme_bw() +
+  coord_fixed()
+```
+
+### Splitting and combining GRMs {#2.5}  
+Normally, we compute GRM for the whole genome but there are times when we want the GRM for only a partition of the genome. For examples,  
+
+* LOCO-GWAS (leave one chromosome out) involves fitting GRM derived from all but the chromosome being tested in the model ([Lippert et al 2011](https://doi.org/10.1038/nmeth.1681)).  
+* Estimating genomic variances/covariances in specific genomic regions using the genome partitioning method ([Schork 2001](https://doi.org/10.1016/s0065-2660(01)42030-x)).  
+* Speeding up GRM calculation for large dataset like how it is done in [LDAK](http://dougspeed.com/ldak/).  
+* Applying different weights to different subsets of markers. One reason is to account for linkage disequilibrium (LD) among markers by reducing the weights of markers that are in high LD ([Speed et al 2012](https://doi.org/10.1016/j.ajhg.2012.10.010)).  
+
+Let's do some practice with this. First, load the marker information.  
+```{r}
+marker <- read.csv(file.path("PERM", "PERM_marker.csv"), as.is=TRUE)
+```
+
+Compute the A-GRM for each chromosome and keep the denominators.  
+```{r}
+# loop through all 10 chromosomes.
+d.list <- list()
+KA.list <- list()
+for(i in 1:10){
+  # extract the marker for chr-i.
+  temp.geno <- geno[, marker$Chr==i]
+  
+  # compute the allele frequencies.
+  temp.p <- colSums(temp.geno)/(2*colSums(!is.na(temp.geno)))
+  
+  # center the marker data.
+  temp.W <- temp.geno - matrix(2*temp.p, nrow=nrow(temp.geno), ncol=ncol(temp.geno), byrow=TRUE)
+  
+  # obtain the denominator.
+  temp.d <- sum(2*temp.p*(1-temp.p))
+  
+  # compute the A-GRM.
+  temp.KA <- temp.W%*%t(temp.W)/temp.d
+  
+  # collect the results.
+  d.list[[i]] <- temp.d
+  KA.list[[i]] <- temp.KA
+}
+```
+
+Combine the A-GRMs that we have just computed.  
+```{r}
+# multiply the A-GRMs by their respective denominators.
+KA.comb <- d.list[[1]]*KA.list[[1]]
+for(i in 2:10) KA.comb <- KA.comb + d.list[[i]]*KA.list[[i]]
+
+# divide the sum of all A-GRMs by the sum of all denominators.
+KA.comb <- KA.comb/sum(unlist(d.list))
+```
+
+Combine the A-GRMs from all but one chromosome.  
+```{r}
+# multiple the A-GRMs by their respective denominators.
+KA.loco <- d.list[[2]]*KA.list[[2]]
+for(i in 3:10) KA.loco <- KA.loco + d.list[[i]]*KA.list[[i]]
+
+# divide the sum of all but one A-GRMs by the sum of all but one denominators.
+KA.loco <- KA.loco/sum(unlist(d.list)[-1])
+```
+
+Compare how the original KA matches up with the combined and LOCO approaches.  
+```{r fig.width=10, fig.height=4}
+# prepare the data for plotting.
+KAcomb4plot <- rbind(data.frame(Original=KA[lower.tri(KA)],
+                                Combined=KA.comb[lower.tri(KA.comb)],
+                                LOCO=KA.loco[lower.tri(KA.loco)],
+                                type="off-diagonal"),
+                     data.frame(Original=diag(KA),
+                                Combined=diag(KA.comb),
+                                LOCO=diag(KA.loco),
+                                type="diagonal"))
+KAcomb4plot <- melt(KAcomb4plot, id.vars=c("Original", "type"))
+
+# create the plot.
+ggplot() +
+  geom_point(data=KAcomb4plot, aes(x=Original, y=value, color=type)) +
+  facet_wrap(vars(variable), nrow=1) +
+  theme_bw() +
+  coord_fixed()
+```
+
+<center><b><a href="#">Return to top</a></b></center>
+<br>
+
+## **Genetic distance**  
+This section contains the following three topics:  
+1. [Fixation index (Fst)](#3.1)  
+2. [Genome-wide Fst](#3.2)  
+3. [Neighbor joining tree with Roger’s and Nei’s distance](#3.3)  
+
+We will need the following package(s) for this section. Please install them if you don't already have them.  
+```{r eval=FALSE}
+install.packages("hierfstat")
+install.packages("ggplot2")
+install.packages("adegenet")
+install.packages("poppr")
+install.packages("ape")
+```
+
+Load the package(s).  
+```{r message=FALSE}
+library(hierfstat)
+library(ggplot2)
+library(adegenet)
+library(poppr)
+library(ape)
+```
+
+### Fixation index (Fst) {#3.1}  
+Fst is probably the most common measure of genetic distance for populations with "short" divergence history. There are many ways to compute Fst, but we will only explore the [Weir and Goudet 2017](https://doi.org/10.1534/genetics.116.198424) method here as it is implemented in the `R/hierfstat` package. We will first use the package to compute Fst, but we will also do it manually after that.  
+
+Load the genomic marker data for DIV.  
+```{r}
+geno <- read.csv(file.path("DIV", "DIV_geno.csv"), as.is=TRUE, row.names=1)
+geno <- as.matrix(geno)
+```
+
+Load the grouping data for DIV.  
+```{r}
+group <- read.csv(file.path("DIV", "DIV_group.csv"), as.is=TRUE)
+table(group$Group) # data is classified into 5 groups.
+```
+
+Use the `fs.dosage()` function in `hierfstat` to compute the Fst based on [Weir and Goudet 2017](https://doi.org/10.1534/genetics.116.198424). Notice that the Fis is 1 because everything here is inbred.  
+```{r}
+fs.dosage(dos=geno, pop=group$Group)
+```
+
+Let's try to compute these Fst values manually. This is the same as the formula we learned in the lecture:  
+$$F_{ST,i}=\frac{M_{w,i}-M_{b}}{1-M_{b}}$$
+```{r}
+# first, reorder the data by group.
+group2 <- group[order(group$Group),]
+geno2 <- geno[group2$ID,]
+
+# identify the indices for each group.
+idx <- lapply(unique(group2$Group), FUN=function(i) which(group2$Group==i))
+
+# compute the matches as 1 - average Manhattan distance between individuals.
+# this works for inbred data.
+match.all <- 1 - as.matrix(dist(x=geno2/2, method="manhattan"))/ncol(geno2)
+
+# set anything other than the lower triangle to 0 for convenience.
+match.all[upper.tri(match.all, diag=TRUE)] <- 0
+
+# compute match-within.
+match.w <- vector()
+for(i in 1:length(idx)){
+  
+  # extract the matrix containing all the within-i match.
+  temp <- match.all[idx[[i]], idx[[i]]]
+  
+  # compute the mean of the match.
+  match.w <- c(match.w, mean(temp[lower.tri(temp)]))
+  
+}
+
+# compute match-between.
+match.b <- vector()
+for(i in 1:(length(idx)-1)){
+  for(j in (i+1):length(idx)){
+  
+    # extract the matrix containing all the between-i match.
+    match.b <- c(match.b, mean(c(match.all[idx[[j]], idx[[i]]])))
+
+  }
+}
+
+# compute the mean of the match-between.
+match.b <- mean(match.b)
+
+# compute the Fst manually.
+c((match.w - match.b)/(1 - match.b), (mean(match.w) - match.b)/(1 - match.b))
+```
+
+Compare the manually computed values to the output from `fs.dosage()`.  
+
+### Genome-wide Fst {#3.2}  
+Genome-wide Fst is often used to identify selection/divergence signals from pairs of populations. It is slightly different from the previous Fst measure as we are now only considering the Fst between two populations, instead of Fst of a sub-population out of a larger whole population. There are multiple ways to define significance threshold, including setting top 1-5% as significant or using a permutation test.  
+
+Load the marker information.  
+```{r}
+marker <- read.csv(file.path("DIV", "DIV_marker.csv"), as.is=TRUE)
+```
+
+For simplicity, let's only compare the Fst between NA_Inbred and EU_Inbred.  
+```{r}
+# extract only the data for these two populations.
+geno3 <- geno[group$Group%in%c("NA_Inbred", "EU_Inbred"), ]
+group3 <- group[group$Group%in%c("NA_Inbred", "EU_Inbred"), ]
+```
+
+Here, we can use the variance component approach of [Weir and Cockerham 1984](https://doi.org/10.2307/2408641) to compute the Fst for each marker. We will need the `varcomp.global()` function instead here.  
+```{r}
+# compute the variance components in each marker.
+gw.fst <- varcomp.glob(levels=group3[, "Group", drop=FALSE], loci=data.frame(geno3))
+
+# Fst is taken as the first column of the variance components divided by the sum.
+gw.fst <- gw.fst$loc[,1]/rowSums(gw.fst$loc)
+```
+
+Let's check how the genome-wide Fst looks.  
+```{r fig.width=10, fig.height=4}
+# prepare the data for plotting.
+gw4plot <- cbind(marker, Fst=abs(gw.fst), sig=abs(gw.fst) > quantile(abs(gw.fst), probs=0.99))
+
+# plot the data.
+ggplot() +
+  geom_point(data=gw4plot, aes(x=Pos_bp, y=Fst, color=sig)) +
+  facet_grid(cols=vars(Chr), switch="x", scales="free_x", space="free_x") +
+  scale_color_manual(values=c("#555555", "#FF5555")) +
+  theme_minimal() +
+  theme(axis.text.x=element_blank(), axis.title.x=element_blank()) +
+  theme(legend.position="none")
+```
+
+If we were doing a Qst-Fst test, we can use the genome-wide Fst as an approximated null distribution.  
+```{r fig.height=3}
+# null distribution for running Qst-Fst test.
+ggplot() +
+  geom_density(data=gw4plot, aes(x=Fst), fill="#DDDDDD") +
+  theme_bw()
+```
+
+### Neighbor joining tree with Roger's and Nei's distance {#3.3}  
+Although Roger's and Nei's distances are less used in "short" evolutionary time, we will still cover them here anyway. We will be used several packages here which I think are popular among the population geneticists. Note that these packages cannot take our biallelic marker data directly because population geneticists tend to work with multiallelic data. We will have to first convert the data into the `adegenet::genind` format.  
+```{r}
+geno4 <- geno
+geno4[geno4==0] <- "A/A"
+geno4[geno4==1] <- "A/B" # we don't actually have heterozygotes.
+geno4[geno4==2] <- "B/B"
+geno4 <- df2genind(X=geno4, sep="/")
+```
+
+Now that we have the right format, we can compute the Roger's and Nei's distance.  
+```{r}
+# compute Roger's distance.
+dist.rog <- rogers.dist(x=geno4)
+
+# compute Nei's distance.
+dist.nei <- nei.dist(x=geno4)
+```
+
+Let's plot the neighbor-joining (NJ) trees from these distances.  
+```{r figures-side, fig.show="hold", out.width="50%", fig.width=10, fig.height=30}
+# plot the NJ tree for Roger's distance.
+plot(nj(dist.rog), cex=1)
+
+# plot the NJ tree for Nei's distance.
+plot(nj(dist.nei), cex=1)
+```
+
+<center><b><a href="#">Return to top</a></b></center>
+<br>
+
+## **Population structure**  
+This section contains the following five topics:  
+1. [Principal component analysis (PCA)](#4.1)  
+2. [Population admixture analysis](#4.2)  
+3. [GWAS with and without population structure control](#4.3)  
+4. [eigenGWAS](#4.4)  
+5. [GBLUP](#4.5)  
+
+We will need the following package(s) for this section. Please install them if you don't already have them.  
+```{r eval=FALSE}
+install.packages("ggplot2")
+install.packages("sommer")
+```
+
+Unlike the other packages, `LEA` is provided via Bioconductor instead of CRAN like many common R packages. We need to first install the Bioconductor package that will allow us to download packages from its site.  
+
+```{r eval=FALSE}
+install.packages("BiocManager")
+BiocManager::install("LEA")
+```
+
+Load the package(s).  
+```{r message=FALSE}
+library(ggplot2)
+library(LEA)
+library(sommer)
+```
+
+### Principal component analysis (PCA) {#4.1}  
+PCA is like the bread-and-butter for those who work in genetics and breeding. There are many packages that will compute PCA for you, but it is also relatively easy to do it manually.  
+
+Load the genomic marker data for DIV.  
+```{r}
+geno <- read.csv(file.path("DIV", "DIV_geno.csv"), as.is=TRUE, row.names=1)
+geno <- as.matrix(geno)
+```
+
+Load the grouping data for DIV.
+```{r}
+group <- read.csv(file.path("DIV", "DIV_group.csv"), as.is=TRUE)
+```
+
+The first step in doing a PCA is to compute the genetic relationship matrix. Note that this GRM is slightly different from how we did it previously. Here, the scaling is applied to each marker separately, while in the previous method, we applied the same average scaling to all markers. This is slightly quicker and can be easily done with the `scale()` function in base `R` so we will use it out of convenience.  
+```{r}
+geno.scaled <- scale(x=geno, center=TRUE, scale=TRUE)
+temp <- geno.scaled%*%t(geno.scaled)/ncol(geno.scaled)
+```
+
+Then we can compute the principal components by a method called eigen-decomposition.  
+```{r}
+PC <- eigen(temp)
+```
+
+Before we look at the PCA, we should check the percent variance explained (PVE) by each PC.  
+```{r fig.width=5, fig.height=3}
+# prepare the data to plot the percent variance explained by the PC.
+pve <- data.frame(PC=1:nrow(geno), PVE=cumsum(100*PC$values/sum(PC$values)))
+
+# plot the PVE.
+ggplot() +
+  geom_point(data=pve, aes(x=PC, y=PVE)) +
+  theme_bw()
+```
+
+Let's prepare the data for plotting the first few PCs.  
+```{r}
+# prepare the data to create PCA plot.
+pca <- data.frame(PC1=PC$vectors[,1],
+                  PC2=PC$vectors[,2],
+                  PC3=PC$vectors[,3],
+                  PC4=PC$vectors[,4],
+                  ID=group$ID,
+                  Group=group$Group)
+```
+
+First, let's plot PC1 vs PC2 and show the data points as the names of the lines.  
+```{r}
+# plot the PCA (PC1 vs PC2, text label).
+ggplot() +
+  geom_text(data=pca, aes(x=PC1, y=PC2, label=ID), size=2) +
+  theme_bw() +
+  coord_fixed()
+```
+
+That was hard to see, right? Let's color code them according to the group information.  
+```{r}
+# plot the PCA (PC1 vs PC2, group-colored).
+ggplot() +
+  geom_point(data=pca, aes(x=PC1, y=PC2, color=Group), size=2) +
+  theme_bw() +
+  coord_fixed()
+```
+
+How about PC3 vs PC4?  
+```{r}
+# plot the PCA (PC3 vs PC4, group-colored).
+ggplot() +
+  geom_point(data=pca, aes(x=PC3, y=PC4, color=Group), size=2) +
+  theme_bw() +
+  coord_fixed()
+```
+
+### Population admixture analysis {#4.2}  
+Here, we will use a package called `LEA` ([Frichot and Francois 2015](https://doi.org/10.1111/2041-210X.12382)) to do population admixture analysis. In the lecture, we talked about the popular software like STRUCTURE ([Pritchard et al 2000](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1461096/)) and ADMIXTURE ([Alexander et al 2009](https://dx.doi.org/10.1101%2Fgr.094052.109)), but none of those are implemented in R.  
+
+We use the `snmf()` function in `LEA` to perform the admixture analysis. One important value to consider here is **K**, which is the theoretical number of founders that gave rise to all individuals in the population that we are analyzing. I do not know what is a good K value, and there are many literature out there that may help you in deciding the "correct" K. For now, let's start with testing K = 2, 3 and 4.  
+
+```{r results="hide"}
+out <- snmf(file.path("BCF", "BCF.geno"), K=2:4, entropy=TRUE, repetitions=10, project="new")
+```
+
+According to the package, we can use the model entropy to help us decide on the best K.  
+```{r fig.width=5, fig.height=5}
+plot(out, pch=16, col="#FF9999")
+```
+
+Let's plot the admixture results for K=2.  
+```{r message=FALSE}
+barchart(out,
+         K=2,
+         run=which.min(cross.entropy(out, K=2)),
+         sort.by.Q=F,
+         border=NA,
+         space=0,
+         col=c("#E69F00", "#56B4E9"),
+         ylab="Ancestry proportions")
+```
+
+Let's plot the admixture results for K=3.  
+```{r message=FALSE}
+barchart(out,
+         K=3,
+         run=which.min(cross.entropy(out, K=3)),
+         sort.by.Q=F,
+         border=NA,
+         space=0,
+         col=c("#E69F00", "#56B4E9", "#009E73"),
+         ylab="Ancestry proportions")
+```
+
+Let's plot the admixture results for K=4.  
+```{r message=FALSE}
+barchart(out,
+         K=4,
+         run=which.min(cross.entropy(out, K=4)),
+         sort.by.Q=F,
+         border=NA,
+         space=0,
+         col=c("#E69F00", "#56B4E9", "#009E73", "#F0E442"),
+         ylab="Ancestry proportions")
+```
+
+Notice that for each K, we ran the model 10 times as indicated by `repetitions=10`. We plot only the best iteration, which is the one with lowest entropy. Based on these 3 plots, which one do you think best matches with the population?  
+
+### GWAS with and without population structure control {#4.3}  
+There is a whole separate lecture/lab session on GWAS, but we will focus only on the population structure control here to demonstrate the point we learned in the lecture. Many population structure control methods exist, but we will only cover the most popular K-model here, i.e. mixed model with GRM.  
+
+Load the marker information.  
+```{r}
+marker <- read.csv(file.path("DIV", "DIV_marker.csv"), as.is=TRUE)
+```
+
+Load the simulated phenotype data.  
+```{r}
+pheno <- read.csv(file.path("DIV", "DIV_pheno.csv"), as.is=TRUE)
+```
+
+Compute the A-GRM.  
+```{r}
+KA <- A.mat(geno-1)
+```
+
+Run the GWAS with mixed model. This controls for population structure using the A-GRM and it is roughly equivalent to the Q+K model, well, without the Q.  
+```{r}
+gw1 <- GWAS(fixed=trait~1,
+            random=~vsr(ID, Gu=KA),
+            rcov=~units,
+            data=pheno,
+            M=geno-1,
+            gTerm="u:ID",
+            dateWarning=FALSE)
+```
+
+Run the GWAS with fixed model. This does not control for population structure.  
+```{r}
+gw2 <- sapply(1:ncol(geno), FUN=function(i) summary(glm(trait~geno[,i], data=pheno))$coefficients[2,4])
+```
+
+Let's prepare the data for plotting.  
+```{r}
+# prepare the data for plotting the mixed model results.
+gw1plot <- cbind(marker[,c(2,4)], gw1$scores[,1])
+colnames(gw1plot) <- c("Chrom", "Position", "p.val")
+gw1plot$p.val[gw1plot$p.val==Inf] <- NA
+
+# prepare the data for plotting the fixed model results.
+gw2plot <- cbind(marker[,c(2,4)], -log10(gw2))
+colnames(gw2plot) <- c("Chrom", "Position", "p.val")
+```
+
+Here is a manhattan plot of the results with population structure control.  
+```{r}
+# plot the mixed model results.
+manhattan(gw1plot, pch=16, fdr.level=FALSE, show.fdr=FALSE)
+```
+
+Here is a manhattan plot of the results without population structure control.  
+```{r}
+# plot the fixed model results.
+manhattan(gw2plot, pch=16, fdr.level=FALSE, show.fdr=FALSE)
+```
+
+Let's plot the $-log_{10}p$ scores for both and compare. The blue lines are just approximated significance threshold.  
+```{r}
+ggplot() +
+  annotate("segment", x=-Inf, xend=Inf, y=4, yend=4, color="#9999FF") +
+  annotate("segment", x=4, xend=4, y=-Inf, yend=Inf, color="#9999FF") +
+  geom_point(aes(x=gw1plot$p.val, y=gw2plot$p.val), na.rm=TRUE) +
+  geom_abline(slope=1, intercept=0, color="#FF0000") +
+  theme_bw() +
+  scale_x_continuous(breaks=seq(0,8,2)) +
+  scale_y_continuous(breaks=seq(0,8,2)) +
+  xlab("With PS control") +
+  ylab("Without PS control") +
+  coord_fixed()
+```
+
+### eigenGWAS {#4.4}  
+An interesting application of GWAS and population structure is called eigenGWAS. This was first described by [Chen et al 2016](https://doi.org/10.1038/hdy.2016.25). Essentially, it uses principal components (eigenvectors) as traits, and it can map loci associated with population structure or any trait that correlates with the eigenvectors.  
+
+To do so, we will take the first principal component and add it to the phenotype data frame.  
+```{r}
+# compute the first principal component.
+PC1 <- eigen(KA)$vectors[,1]
+
+# add that to the phenotype data.
+pheno <- cbind(pheno, PC1=PC1)
+```
+
+Here is a similar model to the one we used previously.  
+```{r warning=FALSE}
+# eigenGWAS with mixed model.
+gw3 <- GWAS(fixed=PC1~1,
+            random=~vsr(ID, Gu=KA),
+            rcov=~units,
+            data=pheno,
+            M=geno-1,
+            gTerm="u:ID",
+            dateWarning=FALSE)
+```
+
+Let's check the results.  
+```{r}
+# prepare the data for plotting the mixed model results.
+gw3plot <- cbind(marker[,c(2,4)], gw3$scores[,1])
+colnames(gw3plot) <- c("Chrom", "Position", "p.val")
+gw3plot$p.val[gw3plot$p.val==Inf] <- NA
+
+# plot the mixed model results.
+manhattan(gw3plot, pch=16, fdr.level=FALSE, show.fdr=FALSE)
+```
+
+Unfortunately, nothing appears to be significant. It is possible that there is no strong genomic region that is associated with the variation in this collection of maize and teosinte, or it is more likely that the dataset is fairly small so the power of detection is low.  
+
+### GBLUP {#4.5}  
+Like GWAS, I think there is a separate session on genomic prediction/selection. We will only use it as an example to demonstrate relationship between populations. There are many methods but we will only use the most common one, which is known as genomic BLUP or GBLUP. Genomic prediction relies on the relationship between the training and testing datasets to achieve good prediction accuracy, i.e. populations that are genetically distant tend to have lower prediction accuracy. Here, we will run a quick check to see how the choice of training population determines the prediction accuracy.  
+
+We will use two training populations. First is randomly sampled 96 lines from the pool of CIMMYT/EU_Inbred/NA_Inbred/PVP groups. Second is all 96 lines from the PVP group. The testing population will be Teosinte.  
+```{r}
+# identify the lines.
+set.seed(252)
+train1 <- sort(sample(group$ID[!(group$Group=="Teosinte")], 96))
+train2 <- group$ID[group$Group=="PVP"]
+test <- group$ID[group$Group=="Teosinte"]
+```
+
+Prepare the simulated phenotype data.  
+```{r}
+pheno <- pheno[, 1:2]
+rownames(pheno) <- pheno$ID
+```
+
+Compute the A-GRM and set the testing phenotype to missing.  
+```{r}
+# random 96 + Teosinte.
+KA1 <- A.mat(geno[c(train1, test), ]-1)
+pheno1 <- pheno[c(train1, test), ]
+pheno1$trait[pheno1$ID%in%test] <- NA
+
+# PVP + Teosinte.
+KA2 <- A.mat(geno[c(train2, test), ]-1)
+pheno2 <- pheno[c(train2, test), ]
+pheno2$trait[pheno2$ID%in%test] <- NA
+```
+
+Use the `mmer()` function in `R/sommer` to fit our GBLUP model.  
+```{r}
+# GBLUP 1, get the predicted values.
+mm1 <- mmer(fixed=trait~1,
+            random=~vsr(ID, Gu=KA1),
+            rcov=~units,
+            data=pheno1,
+            dateWarning=FALSE)
+pred1 <- c(mm1$Beta$Estimate + mm1$U$`u:ID`$trait)[test]
+
+# GBLUP 2, get the predicted values.
+mm2 <- mmer(fixed=trait~1,
+            random=~vsr(ID, Gu=KA2),
+            rcov=~units,
+            data=pheno2,
+            dateWarning=FALSE)
+pred2 <- c(mm2$Beta$Estimate + mm2$U$`u:ID`$trait)[test]
+```
+
+Let's compare the prediction accuracies.  
+```{r}
+cor(cbind(obs=pheno[test, "trait"], pred1, pred2))
+```
+
+It appears that the random set is performing better than the PVP as a training population. It is likely that the non-PVP lines are genetically closer to Teosinte.  
+
+<center><b><a href="#">Return to top</a></b></center>
+<br>

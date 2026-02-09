@@ -1,1 +1,2 @@
-Lecture materials
+Teaching materials
+
